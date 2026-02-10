@@ -805,9 +805,17 @@
             }
         };
 
+        // SupplierMaster functions dengan createdBy
         const getSupplierMaster = async () => {
             try {
-                const snapshot = await db.collection('supplierMaster').orderBy('nama').get();
+                let query = db.collection('supplierMaster');
+                
+                // Admin dapat melihat semua data, karyawan hanya data miliknya
+                if (userRole === 'Karyawan') {
+                    query = query.where('createdBy', '==', currentUser.uid);
+                }
+                
+                const snapshot = await query.orderBy('nama').get();
                 supplierMasterData = [];
                 snapshot.forEach(doc => {
                     supplierMasterData.push({
@@ -826,6 +834,7 @@
             try {
                 const docRef = await db.collection('supplierMaster').add({
                     ...data,
+                    createdBy: currentUser.uid,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 return docRef.id;
@@ -1059,7 +1068,13 @@
                 }
             });
 
-            db.collection('supplierMaster').orderBy('nama').onSnapshot(snapshot => {
+            // Real-time listener untuk supplierMaster dengan filter berdasarkan user
+            let supplierMasterQuery = db.collection('supplierMaster');
+            if (userRole === 'Karyawan') {
+                supplierMasterQuery = supplierMasterQuery.where('createdBy', '==', currentUser.uid);
+            }
+            
+            supplierMasterQuery.orderBy('nama').onSnapshot(snapshot => {
                 supplierMasterData = [];
                 snapshot.forEach(doc => {
                     supplierMasterData.push({
