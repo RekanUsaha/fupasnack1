@@ -3098,6 +3098,7 @@
             }, 1000);
         };
 
+        // *** PERBAIKAN UTAMA: Proses upload foto & simpan hanya jika di dalam radius ***
         const onPositionSuccess = async (pos, waktuPresensi) => {
             // Validasi ulang: cek apakah sudah presensi hari ini
             const sudahPresensi = await sudahPresensiHariIni();
@@ -3168,7 +3169,18 @@
             // Validasi radius - menggunakan lokasi kantor user yang sesuai
             const inside = dist <= kantorRadius;
 
-            // Upload foto jika ada
+            // *** PERBAIKAN: Jika di luar radius, batalkan seluruh proses ***
+            if (!inside) {
+                updateAbsensiStatus(`Anda berada di luar radius (${Math.round(dist)} m dari kantor). Presensi tidak dapat dilakukan.`, 'error');
+                absenBtn.disabled = false;
+                takePhotoBtn.disabled = false;
+                currentPhoto = null; // Reset foto agar tidak terpakai
+                photoPreview.style.display = 'none';
+                return;
+            }
+
+            // --- Hanya lanjutkan jika inside = true ---
+            // Upload foto
             let fotoUrl = null;
             if (currentPhoto) {
                 try {
@@ -3214,9 +3226,7 @@
                 takePhotoBtn.disabled = false;
 
                 // UI feedback
-                if (!inside) {
-                    updateAbsensiStatus(`Gagal: Anda berada di luar radius (${Math.round(dist)} m dari kantor Anda).`, 'error');
-                } else if (flags.length > 0) {
+                if (flags.length > 0) {
                     updateAbsensiStatus(`Absensi ${waktuPresensi.status} berhasil (flagged): ${flags.join(', ')}`, 'warning');
                 } else {
                     updateAbsensiStatus(`Absensi ${waktuPresensi.status} berhasil! Jarak ${Math.round(dist)} m dari kantor Anda.`, 'success');
