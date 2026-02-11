@@ -165,6 +165,21 @@
         .location-display { background: var(--border-color); padding: 8px; border-radius: 5px; margin: 10px 0; font-size: 14px; }
         .photo-preview-container { text-align: center; margin: 15px 0; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Admin Geofence Monitor Styles */
+        .admin-geofence-container { max-width: 1200px; margin: 0 auto; }
+        .admin-controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
+        .admin-filters { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+        .admin-filter-group { display: flex; align-items: center; gap: 6px; }
+        .admin-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .admin-modal.active { display: flex; }
+        .admin-modal-content { background: var(--primary-color); padding: 24px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: var(--shadow); }
+        .admin-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .admin-modal-body { display: flex; flex-direction: column; gap: 12px; }
+        .admin-close-btn { cursor: pointer; font-size: 24px; color: var(--text-color); }
+        .admin-table-container { max-height: 500px; overflow-y: auto; }
+        .admin-table th, .admin-table td { padding: 8px; font-size: 13px; text-align: left; }
+        .admin-table th { background-color: rgba(79, 195, 247, 0.1); position: sticky; top: 0; }
     </style>
 </head>
 <body>
@@ -393,6 +408,60 @@
                         <input type="file" id="cameraInput" accept="image/*" capture="environment">
                     </div>
                 </div>
+
+                <!-- Laporan Kehadiran Admin -->
+                <div class="content-section hidden" id="laporanKehadiranAdmin">
+                    <div class="admin-geofence-container">
+                        <h3>Monitor Kehadiran Admin</h3>
+                        
+                        <div class="admin-controls">
+                            <button id="deleteLogBtn" class="btn btn-danger">Hapus Bulan Lalu</button>
+                            <button id="downloadBtn" class="btn btn-secondary">Unduh CSV</button>
+                        </div>
+
+                        <div class="admin-filters">
+                            <div class="admin-filter-group">
+                                <label>Filter:</label>
+                                <select id="filterNama">
+                                    <option value="">Semua</option>
+                                </select>
+                            </div>
+                            
+                            <div class="admin-filter-group">
+                                <label>Periode:</label>
+                                <select id="filterPeriode">
+                                    <option value="hari_ini">Hari Ini</option>
+                                    <option value="bulan_ini">Bulan Ini</option>
+                                    <option value="periode">Periode</option>
+                                </select>
+                            </div>
+                            
+                            <div class="admin-filter-group" id="periodeInputs" style="display:none;">
+                                <input type="date" id="startDate">
+                                <span>s/d</span>
+                                <input type="date" id="endDate">
+                            </div>
+                        </div>
+
+                        <div class="table-container admin-table-container">
+                            <table id="logTable" class="admin-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Tanggal</th>
+                                        <th>Waktu</th>
+                                        <th>Nama</th>
+                                        <th>Status</th>
+                                        <th>Foto</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Data akan dimuat dari Firestore -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
@@ -521,6 +590,9 @@
             siang: { start: 14 * 60 + 30, tepat: 15 * 60, akhir: 15 * 60 + 15 } // 14:30-15:00 tepat, 15:01-15:15 terlambat
         };
 
+        // Admin Geofence Variables
+        let allAbsensiData = [];
+
         // DOM Elements
         const loginPopup = document.getElementById('loginPopup');
         const loginForm = document.getElementById('loginForm');
@@ -553,6 +625,16 @@
         const lokasiKantorInfo = document.getElementById('lokasiKantorInfo');
         const absensiLogTable = document.querySelector('#absensiLogTable tbody');
 
+        // Admin Geofence DOM Elements
+        const deleteLogBtn = document.getElementById('deleteLogBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const filterNama = document.getElementById('filterNama');
+        const filterPeriode = document.getElementById('filterPeriode');
+        const periodeInputs = document.getElementById('periodeInputs');
+        const startDate = document.getElementById('startDate');
+        const endDate = document.getElementById('endDate');
+        const logTableBody = document.querySelector('#logTable tbody');
+
         const currentZoomLevels = { ringkas: 1, detail: 1, supplier: 1, supplierPopup: 1 };
         const minZoomLevel = 0.5, maxZoomLevel = 2, zoomStep = 0.1;
         let isTabKeyPressed = false;
@@ -566,7 +648,8 @@
         const getPageTitle = contentId => ({ 
             'inputPenjualan': 'Input Penjualan', 
             'laporanRingkas': 'Laporan Keuangan Ringkas',
-            'inputAbsensi': 'Input Absensi'
+            'inputAbsensi': 'Input Absensi',
+            'laporanKehadiranAdmin': 'Laporan Kehadiran Admin'
         }[contentId] || 'Dashboard');
         const getTabLabel = tab => ({ 'ringkas': 'Ringkas', 'detail': 'Detail', 'supplier': 'Uang Supplier' }[tab] || tab);
         const getToday = () => new Date().toISOString().split('T')[0];
@@ -1071,6 +1154,24 @@
             }
         };
 
+        // Function untuk admin mendapatkan semua data absensi
+        const getAllAbsensiData = async () => {
+            try {
+                const snapshot = await db.collection('absensi').orderBy('createdAt', 'desc').get();
+                allAbsensiData = [];
+                snapshot.forEach(doc => {
+                    allAbsensiData.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+                return allAbsensiData;
+            } catch (error) {
+                console.error("Error getting all absensi data:", error);
+                throw error;
+            }
+        };
+
         const addAbsensi = async (absensiData) => {
             try {
                 const docRef = await db.collection('absensi').add({
@@ -1270,6 +1371,16 @@
             const month = String(d.getMonth() + 1).padStart(2, '0');
             const day = String(d.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
+        };
+
+        const formatDateTime = (date) => {
+            const d = new Date(date);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const hours = String(d.getHours()).padStart(2, '0');
+            const minutes = String(d.getMinutes()).padStart(2, '0');
+            return `${day}-${month}-${year} ${hours}:${minutes}`;
         };
 
         const getCurrentMonth = () => {
@@ -2205,6 +2316,282 @@
             }
         };
 
+        // Admin Geofence Functions
+        const togglePeriodeInputs = () => {
+            periodeInputs.style.display = filterPeriode.value === 'periode' ? 'flex' : 'none';
+            renderLaporanKehadiranAdmin();
+        };
+
+        const hapusLogBulanLalu = async () => {
+            if (!confirm('Yakin hapus semua log bulan lalu?')) return;
+            
+            const today = new Date();
+            const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            
+            try {
+                const snapshot = await db.collection('absensi')
+                    .where('createdAt', '<', firstDayOfCurrentMonth)
+                    .get();
+                
+                const batch = db.batch();
+                snapshot.docs.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                
+                await batch.commit();
+                alert(`Berhasil menghapus ${snapshot.size} dokumen bulan lalu`);
+                // Refresh data
+                await getAllAbsensiData();
+                renderLaporanKehadiranAdmin();
+            } catch (error) {
+                console.error('Error menghapus log:', error);
+                alert('Gagal menghapus log: ' + error.message);
+            }
+        };
+
+        const renderLaporanKehadiranAdmin = async () => {
+            try {
+                logTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px;">Memuat data...</td></tr>';
+                
+                // Tunggu sampai data selesai dimuat
+                if (allAbsensiData.length === 0) {
+                    await getAllAbsensiData();
+                }
+                
+                let filteredData = [...allAbsensiData];
+                
+                // Filter nama dari field 'nama' di koleksi absensi
+                const namaFilter = filterNama.value;
+                if (namaFilter) {
+                    filteredData = filteredData.filter(item => item.nama === namaFilter);
+                }
+                
+                // Filter periode
+                const periode = filterPeriode.value;
+                const now = new Date();
+                
+                if (periode === 'hari_ini') {
+                    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    filteredData = filteredData.filter(item => {
+                        const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                        return itemDate >= startOfDay;
+                    });
+                } else if (periode === 'bulan_ini') {
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                    filteredData = filteredData.filter(item => {
+                        const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                        return itemDate >= startOfMonth;
+                    });
+                } else if (periode === 'periode') {
+                    if (startDate.value && endDate.value) {
+                        const start = new Date(startDate.value);
+                        const end = new Date(endDate.value);
+                        end.setHours(23, 59, 59, 999);
+                        filteredData = filteredData.filter(item => {
+                            const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                            return itemDate >= start && itemDate <= end;
+                        });
+                    }
+                }
+                
+                // Sort by date descending
+                filteredData.sort((a, b) => {
+                    const timeA = a.createdAt ? (a.createdAt.seconds || new Date(a.createdAt).getTime()/1000) : 0;
+                    const timeB = b.createdAt ? (b.createdAt.seconds || new Date(b.createdAt).getTime()/1000) : 0;
+                    return timeB - timeA;
+                });
+                
+                // Render tabel
+                logTableBody.innerHTML = '';
+                let index = 1;
+                
+                filteredData.forEach(item => {
+                    const tr = document.createElement('tr');
+                    
+                    // Format tanggal dan waktu
+                    let tanggalFormatted = '-';
+                    let waktuFormatted = '-';
+                    
+                    if (item.createdAt) {
+                        const date = item.createdAt.seconds ? 
+                            new Date(item.createdAt.seconds * 1000) : 
+                            new Date(item.createdAt);
+                        tanggalFormatted = date.toLocaleDateString('id-ID');
+                        waktuFormatted = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+                    } else if (item.tanggal) {
+                        tanggalFormatted = item.tanggal;
+                    }
+                    
+                    // Tentukan status
+                    let statusText = item.status || '-';
+                    if (item.jenis) {
+                        statusText += ` (${item.jenis})`;
+                    }
+                    
+                    // Link foto
+                    const fotoLink = item.foto_url ? 
+                        `<a href="${item.foto_url}" target="_blank" title="Lihat Foto">📷</a>` : '-';
+                    
+                    tr.innerHTML = `
+                        <td>${index++}</td>
+                        <td>${tanggalFormatted}</td>
+                        <td>${waktuFormatted}</td>
+                        <td>${item.nama || '-'}</td>
+                        <td>${statusText}</td>
+                        <td>${fotoLink}</td>
+                    `;
+                    logTableBody.appendChild(tr);
+                });
+                
+                if (index === 1) {
+                    logTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px;">Tidak ada data absensi untuk filter yang dipilih</td></tr>';
+                }
+                
+                // Isi filter nama dengan nama-nama unik dari data absensi
+                if (filterNama.options.length <= 1) {
+                    const uniqueNames = [...new Set(allAbsensiData.map(item => item.nama).filter(Boolean))];
+                    filterNama.innerHTML = '<option value="">Semua</option>';
+                    uniqueNames.forEach(nama => {
+                        const option = document.createElement('option');
+                        option.value = nama;
+                        option.textContent = nama;
+                        filterNama.appendChild(option);
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Error render laporan kehadiran:', error);
+                logTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px;">Error memuat data: ' + error.message + '</td></tr>';
+            }
+        };
+
+        const downloadCSV = async () => {
+            try {
+                // Gunakan data yang sudah difilter
+                let filteredData = [...allAbsensiData];
+                
+                // Filter nama
+                const namaFilter = filterNama.value;
+                if (namaFilter) {
+                    filteredData = filteredData.filter(item => item.nama === namaFilter);
+                }
+                
+                // Filter periode
+                const periode = filterPeriode.value;
+                const now = new Date();
+                
+                if (periode === 'hari_ini') {
+                    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    filteredData = filteredData.filter(item => {
+                        const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                        return itemDate >= startOfDay;
+                    });
+                } else if (periode === 'bulan_ini') {
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                    filteredData = filteredData.filter(item => {
+                        const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                        return itemDate >= startOfMonth;
+                    });
+                } else if (periode === 'periode') {
+                    if (startDate.value && endDate.value) {
+                        const start = new Date(startDate.value);
+                        const end = new Date(endDate.value);
+                        end.setHours(23, 59, 59, 999);
+                        filteredData = filteredData.filter(item => {
+                            const itemDate = item.createdAt ? new Date(item.createdAt.seconds * 1000) : new Date(item.tanggal);
+                            return itemDate >= start && itemDate <= end;
+                        });
+                    }
+                }
+                
+                // Konversi ke CSV - hanya kolom yang diminta: Tanggal, Nama, Status, Waktu, URL Foto
+                const csvHeader = ['Tanggal', 'Waktu', 'Nama', 'Status', 'Foto URL'];
+                const csvData = [];
+                
+                filteredData.forEach((item) => {
+                    let tanggalFormatted = '-';
+                    let waktuFormatted = '-';
+                    
+                    if (item.createdAt) {
+                        const date = item.createdAt.seconds ? 
+                            new Date(item.createdAt.seconds * 1000) : 
+                            new Date(item.createdAt);
+                        tanggalFormatted = date.toLocaleDateString('id-ID');
+                        waktuFormatted = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+                    } else if (item.tanggal) {
+                        tanggalFormatted = item.tanggal;
+                    }
+                    
+                    const statusText = item.status ? `${item.status} ${item.jenis ? `(${item.jenis})` : ''}` : '-';
+                    
+                    csvData.push([
+                        tanggalFormatted,
+                        waktuFormatted,
+                        item.nama || '-',
+                        statusText,
+                        item.foto_url || '-'
+                    ]);
+                });
+                
+                // Konversi ke CSV string
+                let csvContent = csvHeader.join(',') + '\n';
+                csvData.forEach(row => {
+                    csvContent += row.map(field => `"${field}"`).join(',') + '\n';
+                });
+                
+                // Download file
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const timestamp = new Date().toISOString().split('T')[0];
+                a.href = url;
+                a.download = `laporan_kehadiran_${timestamp}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Error download CSV:', error);
+                alert('Gagal mengunduh CSV: ' + error.message);
+            }
+        };
+
+        const setupAdminGeofenceListeners = () => {
+            // Initialize dates
+            const today = new Date().toISOString().split('T')[0];
+            if (startDate) startDate.value = today;
+            if (endDate) endDate.value = today;
+            
+            // Event listeners
+            if (deleteLogBtn) {
+                deleteLogBtn.addEventListener('click', hapusLogBulanLalu);
+            }
+            
+            if (downloadBtn) {
+                downloadBtn.addEventListener('click', downloadCSV);
+            }
+            
+            if (filterPeriode) {
+                filterPeriode.addEventListener('change', togglePeriodeInputs);
+            }
+            
+            if (filterNama) {
+                filterNama.addEventListener('change', renderLaporanKehadiranAdmin);
+            }
+            
+            if (filterPeriode) {
+                filterPeriode.addEventListener('change', renderLaporanKehadiranAdmin);
+            }
+            
+            if (startDate) {
+                startDate.addEventListener('change', renderLaporanKehadiranAdmin);
+            }
+            
+            if (endDate) {
+                endDate.addEventListener('change', renderLaporanKehadiranAdmin);
+            }
+        };
+
         const updateTabNavigation = (contentId, defaultTab) => {
             tabNavigation.innerHTML = '';
             currentTabs = [];
@@ -2527,15 +2914,15 @@
             
             if (periodeSelect) {
                 periodeSelect.addEventListener('change', function() {
-                    const customPeriodGroup = document.getElementById('customPeriodRingkas');
-                    const customPeriodGroup2 = document.getElementById('customPeriodRingkas2');
+                    const customPeriodRingkas = document.getElementById('customPeriodRingkas');
+                    const customPeriodRingkas2 = document.getElementById('customPeriodRingkas2');
                     
                     if (this.value === 'custom') {
-                        customPeriodGroup.classList.remove('hidden');
-                        customPeriodGroup2.classList.remove('hidden');
+                        customPeriodRingkas.classList.remove('hidden');
+                        customPeriodRingkas2.classList.remove('hidden');
                     } else {
-                        customPeriodGroup.classList.add('hidden');
-                        customPeriodGroup2.classList.add('hidden');
+                        customPeriodRingkas.classList.add('hidden');
+                        customPeriodRingkas2.classList.add('hidden');
                     }
                     updateLaporan();
                 });
@@ -2903,12 +3290,20 @@
                 `;
             } else if (userRole === 'Admin') {
                 menuList.innerHTML = `
-                    <li class="menu-item" id="laporanKeuangan">
-                        <span><i class="fas fa-file-invoice-dollar"></i> Laporan Keuangan</span>
+                    <li class="menu-item" id="laporanPenjualanAdmin">
+                        <span><i class="fas fa-chart-line"></i> Laporan Penjualan</span>
                         <i class="fas fa-chevron-down"></i>
                     </li>
-                    <ul class="submenu" id="submenuKeuangan">
+                    <ul class="submenu" id="submenuPenjualanAdmin">
                         <li class="submenu-item" data-content="laporanRingkas">Laporan Ringkas</li>
+                    </ul>
+                    
+                    <li class="menu-item" id="laporanAbsensiAdmin">
+                        <span><i class="fas fa-calendar-check"></i> Laporan Absensi</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </li>
+                    <ul class="submenu" id="submenuAbsensiAdmin">
+                        <li class="submenu-item" data-content="laporanKehadiranAdmin">Laporan Kehadiran</li>
                     </ul>
                     
                     <li class="menu-item" id="switchMode">
@@ -2920,11 +3315,10 @@
                 `;
             }
             
+            // Event listeners untuk menu karyawan
             const laporanPenjualan = document.getElementById('laporanPenjualan');
-            const laporanKeuangan = document.getElementById('laporanKeuangan');
             const laporanAbsensi = document.getElementById('laporanAbsensi');
             const submenuPenjualan = document.getElementById('submenuPenjualan');
-            const submenuKeuangan = document.getElementById('submenuKeuangan');
             const submenuAbsensi = document.getElementById('submenuAbsensi');
             
             if (laporanPenjualan) {
@@ -2934,17 +3328,30 @@
                 });
             }
             
-            if (laporanKeuangan) {
-                laporanKeuangan.addEventListener('click', () => {
-                    submenuKeuangan.classList.toggle('active');
-                    laporanKeuangan.querySelector('.fa-chevron-down').classList.toggle('fa-chevron-up');
-                });
-            }
-            
             if (laporanAbsensi) {
                 laporanAbsensi.addEventListener('click', () => {
                     submenuAbsensi.classList.toggle('active');
                     laporanAbsensi.querySelector('.fa-chevron-down').classList.toggle('fa-chevron-up');
+                });
+            }
+            
+            // Event listeners untuk menu admin
+            const laporanPenjualanAdmin = document.getElementById('laporanPenjualanAdmin');
+            const laporanAbsensiAdmin = document.getElementById('laporanAbsensiAdmin');
+            const submenuPenjualanAdmin = document.getElementById('submenuPenjualanAdmin');
+            const submenuAbsensiAdmin = document.getElementById('submenuAbsensiAdmin');
+            
+            if (laporanPenjualanAdmin) {
+                laporanPenjualanAdmin.addEventListener('click', () => {
+                    submenuPenjualanAdmin.classList.toggle('active');
+                    laporanPenjualanAdmin.querySelector('.fa-chevron-down').classList.toggle('fa-chevron-up');
+                });
+            }
+            
+            if (laporanAbsensiAdmin) {
+                laporanAbsensiAdmin.addEventListener('click', () => {
+                    submenuAbsensiAdmin.classList.toggle('active');
+                    laporanAbsensiAdmin.querySelector('.fa-chevron-down').classList.toggle('fa-chevron-up');
                 });
             }
             
@@ -2974,9 +3381,10 @@
                 }
             });
             
+            // Event listeners untuk semua submenu items
             const submenuItems = document.querySelectorAll('.submenu-item');
             submenuItems.forEach(item => {
-                item.addEventListener('click', () => {
+                item.addEventListener('click', async () => {
                     const contentId = item.getAttribute('data-content');
                     const tab = item.getAttribute('data-tab');
                     
@@ -2996,32 +3404,30 @@
                                 renderSupplierTable();
                             },
                             'laporanRingkas': updateLaporanRingkas,
-                            'inputAbsensi': initializeAbsensi
+                            'inputAbsensi': initializeAbsensi,
+                            'laporanKehadiranAdmin': async () => {
+                                await getAllAbsensiData();
+                                renderLaporanKehadiranAdmin();
+                                setupAdminGeofenceListeners();
+                            }
                         };
                         
-                        if (renderFunctions[contentId]) renderFunctions[contentId]();
-                    }
-                    
-                    if (submenuPenjualan) {
-                        submenuPenjualan.classList.remove('active');
-                        if (laporanPenjualan) {
-                            laporanPenjualan.querySelector('.fa-chevron-down').classList.remove('fa-chevron-up');
+                        if (renderFunctions[contentId]) {
+                            if (contentId === 'laporanKehadiranAdmin') {
+                                await renderFunctions[contentId]();
+                            } else {
+                                renderFunctions[contentId]();
+                            }
                         }
                     }
                     
-                    if (submenuKeuangan) {
-                        submenuKeuangan.classList.remove('active');
-                        if (laporanKeuangan) {
-                            laporanKeuangan.querySelector('.fa-chevron-down').classList.remove('fa-chevron-up');
-                        }
-                    }
-                    
-                    if (submenuAbsensi) {
-                        submenuAbsensi.classList.remove('active');
-                        if (laporanAbsensi) {
-                            laporanAbsensi.querySelector('.fa-chevron-down').classList.remove('fa-chevron-up');
-                        }
-                    }
+                    // Tutup semua submenu
+                    document.querySelectorAll('.submenu').forEach(sub => {
+                        sub.classList.remove('active');
+                    });
+                    document.querySelectorAll('.fa-chevron-down').forEach(icon => {
+                        icon.classList.remove('fa-chevron-up');
+                    });
                 });
             });
         };
