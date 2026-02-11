@@ -640,6 +640,9 @@
         let isTabKeyPressed = false;
         let currentTabs = [];
 
+        // PERBAIKAN: Menambahkan variabel untuk menyimpan urutan paste
+        let selectedSupplierOrder = [];
+
         // Utility Functions
         const capitalizeFirstLetter = string => string.charAt(0).toUpperCase() + string.slice(1);
         const formatCurrency = amount => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
@@ -934,7 +937,8 @@
                     query = query.where('createdBy', '==', currentUser.uid);
                 }
                 
-                const snapshot = await query.orderBy('tanggal', 'desc').get();
+                // PERBAIKAN: Mengurutkan berdasarkan createdAt descending agar terbaru di atas
+                const snapshot = await query.orderBy('createdAt', 'desc').get();
                 salesData = [];
                 snapshot.forEach(doc => {
                     salesData.push({
@@ -1005,7 +1009,8 @@
                     query = query.where('createdBy', '==', currentUser.uid);
                 }
                 
-                const snapshot = await query.orderBy('nama').get();
+                // PERBAIKAN: Mengurutkan berdasarkan createdAt descending agar terbaru di atas
+                const snapshot = await query.orderBy('createdAt', 'desc').get();
                 supplierMasterData = [];
                 snapshot.forEach(doc => {
                     supplierMasterData.push({
@@ -1596,7 +1601,8 @@
                 salesQuery = salesQuery.where('createdBy', '==', currentUser.uid);
             }
             
-            salesQuery.orderBy('tanggal', 'desc').onSnapshot(snapshot => {
+            // PERBAIKAN: Mengurutkan berdasarkan createdAt descending
+            salesQuery.orderBy('createdAt', 'desc').onSnapshot(snapshot => {
                 salesData = [];
                 snapshot.forEach(doc => {
                     salesData.push({
@@ -1644,7 +1650,8 @@
                 supplierMasterQuery = supplierMasterQuery.where('createdBy', '==', currentUser.uid);
             }
             
-            supplierMasterQuery.orderBy('nama').onSnapshot(snapshot => {
+            // PERBAIKAN: Mengurutkan berdasarkan createdAt descending
+            supplierMasterQuery.orderBy('createdAt', 'desc').onSnapshot(snapshot => {
                 supplierMasterData = [];
                 snapshot.forEach(doc => {
                     supplierMasterData.push({
@@ -1848,6 +1855,7 @@
             const tbody = document.querySelector('#tableDetail tbody');
             tbody.innerHTML = '';
             
+            // PERBAIKAN: Data sudah diurutkan dari Firestore berdasarkan createdAt descending
             const dataHariIni = getTodaySalesData();
             
             if (dataHariIni.length === 0) {
@@ -2038,7 +2046,9 @@
                 return;
             }
             
-            supplierMasterData.forEach((item) => {
+            // PERBAIKAN: Data sudah diurutkan dari Firestore berdasarkan createdAt descending
+            // Jadi tidak perlu sorting tambahan di sini
+            supplierMasterData.forEach((item, index) => {
                 const isSelected = selectedSupplierIds.has(item.id);
                 const isReadOnly = !isGlobalEditMode;
                 
@@ -2051,7 +2061,7 @@
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>
-                        <input type="checkbox" class="supplier-checkbox" data-id="${item.id}" ${isSelected ? 'checked' : ''}>
+                        <input type="checkbox" class="supplier-checkbox" data-id="${item.id}" ${isSelected ? 'checked' : ''} data-index="${index}">
                     </td>
                     <td><input type="text" value="${itemData.nama || ''}" data-id="${item.id}" data-field="nama" ${isReadOnly ? 'readonly' : ''}></td>
                     <td><input type="text" value="${itemData.barang || ''}" data-id="${item.id}" data-field="barang" ${isReadOnly ? 'readonly' : ''}></td>
@@ -2071,8 +2081,15 @@
                     const id = this.getAttribute('data-id');
                     if (this.checked) {
                         selectedSupplierIds.add(id);
+                        // PERBAIKAN: Simpan urutan pemilihan
+                        const index = parseInt(this.getAttribute('data-index'));
+                        if (!selectedSupplierOrder.includes(id)) {
+                            selectedSupplierOrder.push(id);
+                        }
                     } else {
                         selectedSupplierIds.delete(id);
+                        // Hapus dari urutan pemilihan
+                        selectedSupplierOrder = selectedSupplierOrder.filter(itemId => itemId !== id);
                     }
                 });
             });
@@ -2084,6 +2101,7 @@
                         try {
                             await deleteSupplierMaster(id);
                             selectedSupplierIds.delete(id);
+                            selectedSupplierOrder = selectedSupplierOrder.filter(itemId => itemId !== id);
                         } catch (error) {
                             console.error("Error deleting supplier master:", error);
                             alert("Gagal menghapus data: " + error.message);
@@ -2805,6 +2823,7 @@
                 closeSupplierMaster.addEventListener('click', () => {
                     supplierMasterPopup.classList.remove('active');
                     selectedSupplierIds.clear();
+                    selectedSupplierOrder = [];
                 });
             }
             
@@ -2832,10 +2851,15 @@
                     checkboxes.forEach(checkbox => {
                         checkbox.checked = this.checked;
                         const id = checkbox.getAttribute('data-id');
+                        const index = parseInt(checkbox.getAttribute('data-index'));
                         if (this.checked) {
                             selectedSupplierIds.add(id);
+                            if (!selectedSupplierOrder.includes(id)) {
+                                selectedSupplierOrder.push(id);
+                            }
                         } else {
                             selectedSupplierIds.delete(id);
+                            selectedSupplierOrder = selectedSupplierOrder.filter(itemId => itemId !== id);
                         }
                     });
                 });
@@ -2849,10 +2873,21 @@
                     }
                     
                     const today = getToday();
-                    const selectedSuppliers = supplierMasterData.filter(item => selectedSupplierIds.has(item.id));
+                    
+                    // PERBAIKAN PENTING: Menggunakan selectedSupplierOrder untuk menjaga urutan
+                    // Dapatkan supplier berdasarkan urutan pemilihan
+                    const selectedSuppliers = [];
+                    selectedSupplierOrder.forEach(id => {
+                        const supplier = supplierMasterData.find(item => item.id === id);
+                        if (supplier) {
+                            selectedSuppliers.push(supplier);
+                        }
+                    });
                     
                     let successCount = 0;
-                    for (const supplier of selectedSuppliers) {
+                    // PERBAIKAN: Menggunakan reverse() agar yang dipilih pertama muncul di atas
+                    // Karena data di detail diurutkan dari terbaru ke terlama
+                    for (const supplier of selectedSuppliers.reverse()) {
                         const newItem = {
                             tanggal: today,
                             supplier: supplier.nama || '',
@@ -2874,6 +2909,7 @@
                     alert(`Berhasil menambahkan ${successCount} entri dari supplier.`);
                     supplierMasterPopup.classList.remove('active');
                     selectedSupplierIds.clear();
+                    selectedSupplierOrder = [];
                 });
             }
             
@@ -2888,6 +2924,7 @@
                         try {
                             await deleteSupplierMasterBatch(Array.from(selectedSupplierIds));
                             selectedSupplierIds.clear();
+                            selectedSupplierOrder = [];
                             alert('Supplier berhasil dihapus.');
                         } catch (error) {
                             console.error("Error deleting supplier batch:", error);
@@ -2901,6 +2938,7 @@
                 if (e.target === supplierMasterPopup) {
                     supplierMasterPopup.classList.remove('active');
                     selectedSupplierIds.clear();
+                    selectedSupplierOrder = [];
                 }
             });
         };
